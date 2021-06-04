@@ -4,12 +4,18 @@ import 'package:web_scraper/web_scraper.dart';
 
 import 'utils.dart';
 
+const List<String> metadataTags = ['head', 'link', 'meta'];
+const List<String> formattingTags = ['b', 'i', 's', 'u', 'span', 'strong', 'small', 'mark', 'em', 'del', 'ins', 'sub', 'sup'];
+const List<String> quotationTags = ['blockquote', 'q', 'abbr', 'address', 'cite', 'bdo'];
+const List<String> sectioningTags = ['header', 'body', 'footer', 'nav', 'article', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'];
+const List<String> irrelevantTags = ['area', 'audio', 'img', 'map', 'track', 'video', 'embed', 'iframe', 'object', 'param', 'source', 'canvas', 'noscript', 'code', 'a'];
+
 class Crawler {
   /// The starting point of the crawl
   final String initialUrl;
 
   /// Stores all content extracted from visited pages
-  final List<String> extractedText = [];
+  final List<Text> extractedText = [];
 
   /// Keeps track of all visited urls
   int totalVisited = 0;
@@ -18,10 +24,11 @@ class Crawler {
   final bool allowInsecureHttp;
 
   /// Specifies a valid url match, based on whether insecure http is allowed or not
-  final _validUrl;
+  final RegExp _validUrl;
   
   /// [initialUrl] - The root of the tree of pages / The first visited page
-  Crawler({required this.initialUrl, this.allowInsecureHttp = false}) : _validUrl = RegExp('"http${!allowInsecureHttp ? 's' : ''}:\/\/.+?"');
+  Crawler({required this.initialUrl, this.allowInsecureHttp = false})
+    : _validUrl = RegExp('("|\')http${!allowInsecureHttp ? 's' : ''}:\/\/(www.)?(\\w+?\.)+?\\w+?(\/[^"\']+?)*?("|\')');
 
   /// Specifies a valid path match, disallowing links to files, scripts and images
   final _validPath = RegExp('"\/[^\.]+?"');
@@ -31,7 +38,7 @@ class Crawler {
     final urlsToVisit = Queue<String>()..add(initialUrl);
 
     // While there are hosts to visit
-    while (urlsToVisit.isNotEmpty && totalVisited != pageLimit) {
+    while (urlsToVisit.isNotEmpty) {
       // Keeps track of paths that have already been remembered, and therefore cannot be added to [pathsToVisit]
       final registeredPaths = <String>{};
       // The empty path is the root path which must be accessed first
@@ -39,7 +46,7 @@ class Crawler {
 
       final scraper = WebScraper(urlsToVisit.removeFirst());
 
-      while (pathsToVisit.isNotEmpty) {
+      while (pathsToVisit.isNotEmpty && totalVisited != pageLimit) {
         var currentPath = pathsToVisit.removeFirst();
 
         // If loading the page failed
@@ -61,8 +68,18 @@ class Crawler {
         // Remember unique urls
         registeredUrls.addAll(extractedUrls);
 
+        // Treat all formatted text as normal text by removing formatting tags
+        content = content.replaceAll(RegExp('<\/?(${formattingTags.join('|')})>'), '');
+        // Remove all unneeded tags
+        content = content.replaceAll(RegExp(''))
+
         totalVisited++;
+
         print('Found ${registeredUrls.length} urls, visited $totalVisited pages');
+      }
+
+      if (totalVisited == pageLimit) {
+        break;
       }
     }
 
