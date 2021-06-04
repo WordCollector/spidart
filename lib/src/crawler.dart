@@ -1,14 +1,24 @@
 import 'dart:collection';
+import 'dart:io';
 
 import 'package:web_scraper/web_scraper.dart';
 
-import 'utils.dart';
+import 'package:spidart/src/text.dart';
+import 'package:spidart/src/utils.dart';
 
 const List<String> metadataTags = ['head', 'link', 'meta'];
 const List<String> formattingTags = ['b', 'i', 's', 'u', 'span', 'strong', 'small', 'mark', 'em', 'del', 'ins', 'sub', 'sup'];
 const List<String> quotationTags = ['blockquote', 'q', 'abbr', 'address', 'cite', 'bdo'];
-const List<String> sectioningTags = ['header', 'body', 'footer', 'nav', 'article', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'];
-const List<String> irrelevantTags = ['area', 'audio', 'img', 'map', 'track', 'video', 'embed', 'iframe', 'object', 'param', 'source', 'canvas', 'noscript', 'code', 'a'];
+const List<String> sectioningTags = ['html', 'main', 'header', 'body', 'footer', 'nav', 'article', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'div', 'hr', 'li', 'ol', 'ul'];
+const List<String> paragraphTags = ['p', 'pre'];
+const List<String> formTags = ['button', 'datalist', 'form', 'fieldset', 'label', 'legend', 'optgroup', 'option', 'select'];
+const List<String> irrelevantTags = ['area', 'audio', 'img', 'map', 'track', 'video', 'embed', 'iframe', 'object', 'param', 'source', 'canvas', 'noscript', 'script', 'code', 'a', 'address', 'textarea'];
+
+final RegExp metadataTagsRegex = RegExp('<(${metadataTags.join('|')}).+?<\/(${metadataTags.join('|')})>');
+final RegExp formattingTagsRegex = RegExp('<\/?(${formattingTags.join('|')})[^<>]*?>');
+final RegExp sectioningTagsRegex = RegExp('<\/?(${sectioningTags.join('|')})[^<>]*?>');
+final RegExp formTagsRegex = RegExp('<\/?(${formTags.join('|')})[^<>]*?>');
+final RegExp irrelevantTagsRegex = RegExp('<(${irrelevantTags.join('|')}).+?<\/(${irrelevantTags.join('|')})>', dotAll: true);
 
 class Crawler {
   /// The starting point of the crawl
@@ -34,8 +44,18 @@ class Crawler {
   final _validPath = RegExp('"\/[^\.]+?"');
 
   Future crawl({int pageLimit = -1, bool quiet = false}) async {
+    if (pageLimit == 0) {
+      throw 'By setting the limit of pages to 0, you have made the crawler unable to crawl. 🤡';
+    }
+
+    if (pageLimit < -1) {
+      throw 'The limit of pages the crawler can traverse cannot be negative.';
+    }
+    
     final registeredUrls = <String>{};
     final urlsToVisit = Queue<String>()..add(initialUrl);
+
+    print('Crawling ${pageLimit == -1 ? 'with no limit of pages' : 'through a maximum of $pageLimit pages'} ...');
 
     // While there are hosts to visit
     while (urlsToVisit.isNotEmpty) {
@@ -68,14 +88,15 @@ class Crawler {
         // Remember unique urls
         registeredUrls.addAll(extractedUrls);
 
-        // Treat all formatted text as normal text by removing formatting tags
-        content = content.replaceAll(RegExp('<\/?(${formattingTags.join('|')})>'), '');
-        // Remove all unneeded tags
-        content = content.replaceAll(RegExp(''))
+        content = content.replaceAll(metadataTagsRegex, '');
+        content = content.replaceAll(formattingTagsRegex, '');
+        content = content.replaceAll(sectioningTagsRegex, '');
+        content = content.replaceAll(formTagsRegex, '');
+        content = content.replaceAll(irrelevantTagsRegex, '');
+
+        extractedText.addAll(content.split('  ').map((textPiece) => Text(TextType.none, textPiece)));
 
         totalVisited++;
-
-        print('Found ${registeredUrls.length} urls, visited $totalVisited pages');
       }
 
       if (totalVisited == pageLimit) {
@@ -83,9 +104,9 @@ class Crawler {
       }
     }
 
-    print(registeredUrls);
-
     print('Crawl complete. Visited $totalVisited pages, extracted ${extractedText.length} pieces of text.');
+
+    await File('output.txt').writeAsString(extractedText.join('\n\n'));
 
     return;
   }
