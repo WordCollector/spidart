@@ -1,6 +1,6 @@
 import 'dart:collection';
-import 'dart:io';
 
+import 'package:spidart/src/robots.dart';
 import 'package:web_scraper/web_scraper.dart';
 
 import 'package:spidart/src/text.dart';
@@ -24,6 +24,9 @@ class Crawler {
   /// The starting point of the crawl
   final String initialUrl;
 
+  /// What identifies this particular crawler instance
+  final String userAgent;
+
   /// Stores all content extracted from visited pages
   final List<Text> extractedText = [];
 
@@ -37,7 +40,7 @@ class Crawler {
   final RegExp _validUrl;
   
   /// [initialUrl] - The root of the tree of pages / The first visited page
-  Crawler({required this.initialUrl, this.allowInsecureHttp = false})
+  Crawler({required this.initialUrl, this.userAgent = 'spidart', this.allowInsecureHttp = false})
     : _validUrl = RegExp('("|\')http${!allowInsecureHttp ? 's' : ''}:\/\/(www.)?(\\w+?\.)+?\\w+?(\/[^"\']+?)*?("|\')');
 
   /// Specifies a valid path match, disallowing links to files, scripts and images
@@ -54,39 +57,75 @@ class Crawler {
     
     final registeredUrls = <String>{};
     final urlsToVisit = Queue<String>()..add(initialUrl);
+    final robots = Robots(userAgent: userAgent);
 
-    print('Crawling ${pageLimit == -1 ? 'with no limit of pages' : 'through a maximum of $pageLimit pages'} ...');
+    print(
+      pageLimit == -1 ? 
+      'Crawling with no limit of pages...' : 
+      'Crawling through a maximum of $pageLimit pages...'
+    );
 
     // While there are hosts to visit
     while (urlsToVisit.isNotEmpty) {
       // Keeps track of paths that have already been remembered, and therefore cannot be added to [pathsToVisit]
       final registeredPaths = <String>{};
       // The empty path is the root path which must be accessed first
-      final pathsToVisit = Queue<String>()..add('');
+      final pathsToVisit = Queue<String>()..add('/');
 
-      final scraper = WebScraper(urlsToVisit.removeFirst());
+      final url = urlsToVisit.removeFirst();
+      final host = Utils.getHostFromUrl(url);
+      final scraper = WebScraper(host);
+
+      await robots.readRobots(host);
+
+      // The robots.txt file prohibits the crawler from visiting any of its paths
+      if (robots.disallowedAllPaths) {
+        continue;
+      }
+
+      print('# $host');
 
       while (pathsToVisit.isNotEmpty && totalVisited != pageLimit) {
-        var currentPath = pathsToVisit.removeFirst();
+        final path = pathsToVisit.removeFirst();
 
         // If loading the page failed
-        if (!await scraper.loadWebPage(currentPath)) {
+        try {
+          if (!await scraper.loadWebPage(path)) {
+            continue;
+          }
+        } on WebScraperException catch (e) {
+          print(e.errorMessage());
           continue;
         }
 
         var content = scraper.getPageContent();
         
-        var extractedPaths = content.extract(_validPath);
-        // Remember to visit a path only if it hasn't already been visited
-        pathsToVisit.addAll(extractedPaths.where((path) => !registeredPaths.contains(path)));
-        // Remember unique paths
-        registeredPaths.addAll(extractedPaths);
-        
-        var extractedUrls = content.extract(_validUrl);
+        final extractedPaths = <String>[];
+
+        final extractedUrls = content.extract(_validUrl).toList();
+        // Catch any paths that were written as a complete url
+        extractedPaths.addAll(
+          extractedUrls
+            .where((url) => url.startsWith(host))
+            .map((url) => Utils.getPathFromUrl(url))
+            .where((path) => robots.isAllowedPath(path)
+          )
+        );
+        // Remove the caught paths from `extractedUrls`
+        extractedUrls.removeWhere((url) => url.startsWith(host));
         // Remember to visit a url only if it hasn't already been visited
         urlsToVisit.addAll(extractedUrls.where((url) => !registeredUrls.contains(url)));
-        // Remember unique urls
-        registeredUrls.addAll(extractedUrls);
+        // Remember unique hosts
+        registeredUrls.addAll(extractedUrls.map((url) => url));
+
+        extractedPaths.addAll(content.extract(_validPath));
+        // Remember to visit a path only if it hasn't already been visited
+        pathsToVisit.addAll(extractedPaths.where((path) => 
+          !registeredPaths.contains(path) && 
+          robots.isAllowedPath(path))
+        );
+        // Remember unique paths
+        registeredPaths.addAll(extractedPaths);
 
         content = content.replaceAll(metadataTagsRegex, '');
         content = content.replaceAll(formattingTagsRegex, '');
@@ -97,6 +136,8 @@ class Crawler {
         extractedText.addAll(content.split('  ').map((textPiece) => Text(TextType.none, textPiece)));
 
         totalVisited++;
+
+        print('$totalVisited » $path');
       }
 
       if (totalVisited == pageLimit) {
@@ -105,8 +146,6 @@ class Crawler {
     }
 
     print('Crawl complete. Visited $totalVisited pages, extracted ${extractedText.length} pieces of text.');
-
-    await File('output.txt').writeAsString(extractedText.join('\n\n'));
 
     return;
   }
